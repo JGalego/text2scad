@@ -1,0 +1,18 @@
+{
+  "name": "text2scad",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Natural language to OpenSCAD converter with chat interface and real-time 3D preview",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"",
+    "install:all": "npm install",
+    "build": "npm run build -w client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
