@@ -7,6 +7,11 @@ function Model({ buffer }: { buffer: ArrayBuffer }) {
   const geometry = useMemo(() => {
     const loader = new STLLoader();
     const geom = loader.parse(buffer);
+    // OpenSCAD models are authored Z-up (Z=0 is the ground plane); three.js
+    // and OrbitControls assume Y-up. Without this, every model renders lying
+    // on its side — easy to miss on a roughly-symmetric shape like a mug, but
+    // obvious on anything with a clear "standing" orientation.
+    geom.rotateX(-Math.PI / 2);
     geom.computeVertexNormals();
     return geom;
   }, [buffer]);

@@ -1,0 +1,28 @@
+<svg width="160" height="160" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="text2scad logo">
+  <defs>
+    <linearGradient id="cubeTop" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7bb0ff"/>
+      <stop offset="100%" stop-color="#4f8cff"/>
+    </linearGradient>
+    <linearGradient id="cubeLeft" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2c3e63"/>
+      <stop offset="100%" stop-color="#1a2030"/>
+    </linearGradient>
+    <linearGradient id="cubeRight" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3f5aa0"/>
+      <stop offset="100%" stop-color="#2c3e63"/>
+    </linearGradient>
+  </defs>
+
+  <!-- isometric cube built up from a wireframe, echoing OpenSCAD's CSG cubes -->
+  <g transform="translate(20, 24)">
+    <polygon points="60,0 116,28 60,56 4,28" fill="url(#cubeTop)"/>
+    <polygon points="4,28 60,56 60,112 4,84" fill="url(#cubeLeft)"/>
+    <polygon points="116,28 60,56 60,112 116,84" fill="url(#cubeRight)"/>
+    <polygon points="60,0 116,28 60,56 4,28" fill="none" stroke="#e6e9f2" stroke-opacity="0.25" stroke-width="1.5"/>
+    <polygon points="4,28 60,56 60,112 4,84" fill="none" stroke="#e6e9f2" stroke-opacity="0.15" stroke-width="1.5"/>
+    <polygon points="116,28 60,56 60,112 116,84" fill="none" stroke="#e6e9f2" stroke-opacity="0.15" stroke-width="1.5"/>
+    <!-- chat-prompt caret, standing in for the "text" half of text2scad -->
+    <text x="60" y="34" text-anchor="middle" font-family="'JetBrains Mono','Fira Code',monospace" font-size="20" font-weight="700" fill="#0d0f16">&gt;_</text>
+  </g>
+</svg>
