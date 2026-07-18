@@ -19,10 +19,21 @@ function renderContent(content: string) {
   return nodes;
 }
 
-export function MessageBubble({ message }: { message: ChatMessage }) {
+export function MessageBubble({
+  message,
+  stageLabel,
+}: {
+  message: ChatMessage;
+  stageLabel?: string;
+}) {
+  const roleLabel = message.auto ? "text2scad · auto-check" : message.role === "user" ? "You" : "text2scad";
+
   return (
-    <div className={`bubble bubble-${message.role}`}>
-      <div className="bubble-role">{message.role === "user" ? "You" : "text2scad"}</div>
+    <div className={`bubble bubble-${message.role}${message.auto ? " bubble-auto" : ""}`}>
+      <div className="bubble-role">
+        <span>{roleLabel}</span>
+        {stageLabel && !message.error && <span className="bubble-stage">{stageLabel}</span>}
+      </div>
       <div className="bubble-content">
         {message.error ? (
           <p className="bubble-error">{message.error}</p>
@@ -31,6 +42,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
         )}
         {message.streaming && <span className="cursor" />}
       </div>
+      {message.note && <div className="bubble-note">{message.note}</div>}
     </div>
   );
 }

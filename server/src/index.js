@@ -2,6 +2,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import { chatRouter } from "./routes/chat.js";
+import { critiqueRouter } from "./routes/critique.js";
 import { renderRouter } from "./routes/render.js";
 
 dotenv.config();
@@ -18,6 +19,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api", chatRouter);
 app.use("/api", renderRouter);
+app.use("/api", critiqueRouter);
 
 app.use((err, _req, res, _next) => {
   console.error(err);

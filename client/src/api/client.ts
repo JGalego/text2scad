@@ -77,9 +77,23 @@ export async function streamChat(
   }
 }
 
+export type RenderQuality = "draft" | "final";
+
 export interface RenderResult {
   ok: true;
   buffer: ArrayBuffer;
+  /**
+   * Number of disconnected pieces in the rendered mesh (see server's
+   * meshAnalysis.js). 1 is normal; >1 means some part likely isn't actually
+   * fused to the rest (a floating handle, foot, etc.) even though the code
+   * rendered without error. Objects with a fully enclosed cavity legitimately
+   * report 2+ too, so treat this as a hint worth a second look, not proof —
+   * and not meaningful at all when scenePartCount > 0 (see below).
+   */
+  componentCount?: number;
+  /** >0 if the code used the SCENE PARTS convention — multiple disconnected
+   *  components are then expected/correct, not a defect to auto-fix. */
+  scenePartCount?: number;
 }
 
 export interface RenderFailure {
@@ -88,21 +102,28 @@ export interface RenderFailure {
   details?: string;
 }
 
-// Comfortably above the server's own RENDER_TIMEOUT_MS (default 20s) so the
-// server always gets a chance to reply first; this is a last-resort backstop
-// in case the request never comes back at all (dropped connection, backend
-// down, a render that somehow ignores the server-side kill signal).
-const CLIENT_RENDER_TIMEOUT_MS = 45_000;
+// Comfortably above the server's own timeout for each quality tier (see
+// server/.env.example) so the server always gets a chance to reply first;
+// this is a last-resort backstop in case the request never comes back at all
+// (dropped connection, backend down, a render that ignores the kill signal).
+const CLIENT_RENDER_TIMEOUT_MS: Record<RenderQuality, number> = {
+  draft: 30_000,
+  final: 120_000,
+};
 
-export async function renderScad(code: string): Promise<RenderResult | RenderFailure> {
+export async function renderScad(
+  code: string,
+  quality: RenderQuality = "draft"
+): Promise<RenderResult | RenderFailure> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CLIENT_RENDER_TIMEOUT_MS);
+  const timeoutMs = CLIENT_RENDER_TIMEOUT_MS[quality];
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch("/api/render", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, quality }),
       signal: controller.signal,
     });
 
@@ -116,13 +137,50 @@ export async function renderScad(code: string): Promise<RenderResult | RenderFai
     }
 
     const buffer = await res.arrayBuffer();
-    return { ok: true, buffer };
+    const countHeader = res.headers.get("X-Component-Count");
+    const sceneHeader = res.headers.get("X-Scene-Parts");
+    return {
+      ok: true,
+      buffer,
+      componentCount: countHeader ? Number(countHeader) : undefined,
+      scenePartCount: sceneHeader ? Number(sceneHeader) : undefined,
+    };
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      return { ok: false, error: `Render timed out after ${CLIENT_RENDER_TIMEOUT_MS}ms with no response from the server.` };
+      return { ok: false, error: `Render timed out after ${timeoutMs}ms with no response from the server.` };
     }
     return { ok: false, error: err instanceof Error ? err.message : "The render request failed." };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+export interface CritiqueResult {
+  ok: true;
+  reply: string;
+  code: string | null;
+}
+
+export interface CritiqueFailure {
+  ok: false;
+  error: string;
+}
+
+/** One-shot vision critique of a rendered design. Never throws. */
+export async function critiqueScad(code: string, prompt: string): Promise<CritiqueResult | CritiqueFailure> {
+  try {
+    const res = await fetch("/api/critique", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, prompt }),
+    });
+
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: body.error || `Critique request failed with status ${res.status}` };
+    }
+    return { ok: true, reply: body.reply, code: body.code };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "The critique request failed." };
   }
 }

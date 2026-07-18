@@ -48,7 +48,13 @@ chatRouter.post("/chat", async (req, res) => {
 
   const stream = client.messages.stream({
     model: CHAT_MODEL,
-    max_tokens: 4096,
+    // Generous headroom: adaptive thinking runs by default on this model
+    // (see below) and shares this budget with the actual text response.
+    max_tokens: 8192,
+    // Explicit even though "adaptive" is the default — omitting `thinking`
+    // still runs adaptive, but leaving it implicit reads as "no thinking".
+    thinking: { type: "adaptive" },
+    output_config: { effort: "medium" },
     system: SYSTEM_PROMPT,
     messages: cleaned,
   });
@@ -68,7 +74,17 @@ chatRouter.post("/chat", async (req, res) => {
   });
 
   try {
-    await stream.finalMessage();
+    const finalMessage = await stream.finalMessage();
+    if (!full.trim()) {
+      // Adaptive thinking consumed the whole budget before writing any reply.
+      sseSend(res, "error", {
+        message:
+          finalMessage.stop_reason === "max_tokens"
+            ? "The model spent its whole response budget thinking and never wrote a reply. Try again."
+            : "The model returned an empty response.",
+      });
+      return;
+    }
     const code = extractCode(full);
     sseSend(res, "done", { reply: full, code });
   } catch (err) {

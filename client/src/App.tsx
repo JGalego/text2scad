@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { renderScad, streamChat } from "./api/client";
+import { critiqueScad, renderScad, streamChat } from "./api/client";
 import { ChatInput } from "./components/ChatInput";
 import { MessageBubble } from "./components/MessageBubble";
 import { makeStlDownloadUrl, scadBlobUrl, Viewer } from "./components/Viewer";
+import { downloadConversation } from "./exportConversation";
 import type { ChatMessage } from "./types";
 
 const WELCOME: ChatMessage = {
@@ -12,76 +13,179 @@ const WELCOME: ChatMessage = {
     "Describe an object in plain English and I'll generate an OpenSCAD model and preview it in 3D. Try something like “a low-poly vase” or “a phone stand at a 60 degree angle”, then ask me to tweak it.",
 };
 
+// How many automatic correction rounds to allow after detecting a mesh with
+// disconnected parts, before giving up and just showing the result as-is.
+const MAX_AUTO_FIXES = 2;
+
 let idCounter = 0;
 const nextId = () => `m${Date.now()}-${idCounter++}`;
+
+const STAGE_LABEL: Record<string, string> = {
+  thinking: "Thinking…",
+  streaming: "Replying…",
+  rendering: "Rendering with OpenSCAD…",
+  checking: "Checking realism…",
+  done: "Done",
+  error: "Failed",
+};
 
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
   const [isChatting, setIsChatting] = useState(false);
   const [isRendering, setIsRendering] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
   const [currentCode, setCurrentCode] = useState<string | null>(null);
   const [stlBuffer, setStlBuffer] = useState<ArrayBuffer | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [showCode, setShowCode] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  const autoFixAttemptsRef = useRef(0);
+  const lastUserPromptRef = useRef<string>("an object");
 
   useEffect(() => {
+    messagesRef.current = messages;
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  async function handleRender(code: string) {
+  function patchMessage(id: string, patch: Partial<ChatMessage>) {
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+  }
+
+  /** Renders `code` (draft quality — fast, forced-low $fn) for the given
+   *  assistant turn, and follows up with an automatic correction round if
+   *  the mesh looks like it has a genuinely disconnected part (not just a
+   *  hollow cavity — see meshAnalysis.js, and not for a multi-part scene,
+   *  where separate components are the correct, expected topology). */
+  async function renderForTurn(code: string, assistantId: string) {
     setIsRendering(true);
     setRenderError(null);
-    const result = await renderScad(code);
+    patchMessage(assistantId, { stage: "rendering" });
+
+    const result = await renderScad(code, "draft");
     setIsRendering(false);
-    if (result.ok) {
-      setStlBuffer(result.buffer);
-    } else {
+
+    if (!result.ok) {
       setRenderError(result.details ? `${result.error}\n${result.details}` : result.error);
+      patchMessage(assistantId, { stage: "error", note: `⚠️ Render failed: ${result.error}` });
+      return;
+    }
+
+    setStlBuffer(result.buffer);
+    patchMessage(assistantId, { stage: "done" });
+
+    const componentCount = result.componentCount ?? 1;
+    const isScene = (result.scenePartCount ?? 0) > 0;
+    if (!isScene && componentCount > 1 && autoFixAttemptsRef.current < MAX_AUTO_FIXES) {
+      autoFixAttemptsRef.current += 1;
+      patchMessage(assistantId, {
+        note: `⚠️ Mechanical check found ${componentCount} disconnected mesh pieces — asking the model to fix the overlap (attempt ${autoFixAttemptsRef.current}/${MAX_AUTO_FIXES})…`,
+      });
+      const note: ChatMessage = {
+        id: nextId(),
+        role: "user",
+        auto: true,
+        content: `(auto-check: mechanical inspection found ${componentCount} disconnected mesh components in the design you just produced — some part isn't actually touching/fused to the rest. Increase the overlap so everything forms a single connected solid, and restate the full corrected code.)`,
+      };
+      await runTurn(note);
     }
   }
 
-  async function handleSend(text: string) {
-    const userMsg: ChatMessage = { id: nextId(), role: "user", content: text };
+  /** Appends `newMessage` (a real user send or a synthetic auto-fix note) to
+   *  the conversation and streams the reply. Always builds the API payload
+   *  from the live message state (messagesRef), never a threaded snapshot —
+   *  otherwise patches applied between turns (like the note above) get
+   *  silently overwritten when this replaces the message list. */
+  async function runTurn(newMessage: ChatMessage) {
     const assistantId = nextId();
-    const history = [...messages, userMsg];
-
-    setMessages([...history, { id: assistantId, role: "assistant", content: "", streaming: true }]);
+    const apiHistory = [...messagesRef.current, newMessage];
+    setMessages((prev) => [
+      ...prev,
+      newMessage,
+      { id: assistantId, role: "assistant" as const, content: "", streaming: true, stage: "thinking" as const },
+    ]);
     setIsChatting(true);
 
     try {
       await streamChat(
-        history.map(({ role, content }) => ({ role, content })),
+        apiHistory.map(({ role, content }) => ({ role, content })),
         {
           onDelta: (delta) => {
             setMessages((prev) =>
-              prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + delta } : m))
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, content: m.content + delta, stage: "streaming" } : m
+              )
             );
           },
           onDone: ({ reply, code }) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, content: reply, code, streaming: false } : m
-              )
-            );
+            patchMessage(assistantId, { content: reply, code, streaming: false, stage: code ? "rendering" : "done" });
             if (code) {
               setCurrentCode(code);
-              handleRender(code);
+              void renderForTurn(code, assistantId);
             }
           },
           onError: (message) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, streaming: false, error: message } : m
-              )
-            );
+            patchMessage(assistantId, { streaming: false, stage: "error", error: message });
           },
         }
       );
     } finally {
       setIsChatting(false);
     }
+  }
+
+  function handleSend(text: string) {
+    autoFixAttemptsRef.current = 0;
+    lastUserPromptRef.current = text;
+    void runTurn({ id: nextId(), role: "user", content: text });
+  }
+
+  async function handleCheckRealism() {
+    if (!currentCode || isChecking) return;
+    setIsChecking(true);
+    const assistantId = nextId();
+    setMessages((prev) => [
+      ...prev,
+      { id: assistantId, role: "assistant", content: "", streaming: true, stage: "checking" },
+    ]);
+
+    const result = await critiqueScad(currentCode, lastUserPromptRef.current);
+    setIsChecking(false);
+
+    if (!result.ok) {
+      patchMessage(assistantId, { streaming: false, stage: "error", error: result.error });
+      return;
+    }
+
+    patchMessage(assistantId, { content: result.reply, code: result.code, streaming: false, stage: result.code ? "rendering" : "done" });
+    if (result.code && result.code !== currentCode) {
+      setCurrentCode(result.code);
+      void renderForTurn(result.code, assistantId);
+    }
+  }
+
+  /** The live viewer always shows a fast draft render. Downloads deserve the
+   *  real thing, so this re-renders at full quality on demand rather than
+   *  reusing the draft buffer — worth the wait since it's an explicit,
+   *  occasional action rather than something blocking the chat loop. */
+  async function handleDownloadStl() {
+    if (!currentCode || isFinalizing) return;
+    setIsFinalizing(true);
+    setRenderError(null);
+    const result = await renderScad(currentCode, "final");
+    setIsFinalizing(false);
+
+    if (!result.ok) {
+      setRenderError(result.details ? `${result.error}\n${result.details}` : result.error);
+      return;
+    }
+    const url = makeStlDownloadUrl(result.buffer);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "model.stl";
+    link.click();
   }
 
   return (
@@ -93,12 +197,21 @@ export default function App() {
 
       <main className="app-main">
         <section className="chat-panel">
+          <div className="chat-toolbar">
+            <button
+              className="ghost"
+              disabled={messages.length <= 1}
+              onClick={() => downloadConversation(messages)}
+            >
+              Export conversation
+            </button>
+          </div>
           <div className="chat-messages" ref={scrollRef}>
             {messages.map((m) => (
-              <MessageBubble key={m.id} message={m} />
+              <MessageBubble key={m.id} message={m} stageLabel={m.stage ? STAGE_LABEL[m.stage] : undefined} />
             ))}
           </div>
-          <ChatInput onSend={handleSend} disabled={isChatting} />
+          <ChatInput onSend={handleSend} disabled={isChatting || isChecking} />
         </section>
 
         <section className="viewer-panel">
@@ -106,13 +219,20 @@ export default function App() {
             <span className="status">
               {isRendering
                 ? "Rendering with OpenSCAD…"
+                : isFinalizing
+                ? "Rendering final quality…"
+                : isChecking
+                ? "Checking realism…"
                 : renderError
                 ? "Render failed"
                 : stlBuffer
-                ? "Ready"
+                ? "Ready (draft preview)"
                 : "No model yet"}
             </span>
             <div className="toolbar-actions">
+              <button className="ghost" disabled={!currentCode || isChecking} onClick={handleCheckRealism}>
+                {isChecking ? "Checking…" : "Check realism"}
+              </button>
               <button
                 className="ghost"
                 disabled={!currentCode}
@@ -127,13 +247,14 @@ export default function App() {
               >
                 Download .scad
               </a>
-              <a
-                className={`ghost${stlBuffer ? "" : " disabled"}`}
-                href={stlBuffer ? makeStlDownloadUrl(stlBuffer) : undefined}
-                download="model.stl"
+              <button
+                className="ghost"
+                disabled={!currentCode || isFinalizing}
+                onClick={handleDownloadStl}
+                title="Renders at full quality (slower) before downloading"
               >
-                Download .stl
-              </a>
+                {isFinalizing ? "Rendering final…" : "Download .stl"}
+              </button>
             </div>
           </div>
 
