@@ -34,13 +34,18 @@ Opens the Express API on `http://localhost:3001` and the Vite client on `http://
 
 ## How it works
 
-```
-┌────────────┐  streamed chat   ┌──────────────┐   spawns    ┌──────────┐
-│   React     │ ───────────────▶│   Express     │────────────▶│ openscad │
-│   client    │◀──── SSE ────── │   server      │             │   CLI    │
-│ (chat + 3D  │                 │ (Anthropic     │◀── STL ────│          │
-│  viewer)    │◀── STL blob ────│  SDK + render) │             └──────────┘
-└────────────┘                 └──────────────┘
+```mermaid
+sequenceDiagram
+    participant Client as React client<br/>(chat + 3D viewer)
+    participant Server as Express server<br/>(Anthropic SDK + render)
+    participant OpenSCAD as openscad CLI
+
+    Client->>Server: POST /api/chat (conversation)
+    Server-->>Client: SSE token stream
+    Client->>Server: POST /api/render (code)
+    Server->>OpenSCAD: spawn with .scad source
+    OpenSCAD-->>Server: STL (binary)
+    Server-->>Client: STL blob
 ```
 
 - **Chat → code**: the client streams the conversation to `POST /api/chat`; Claude replies with a short explanation plus one ` ```scad ` block, streamed back over SSE token-by-token.
