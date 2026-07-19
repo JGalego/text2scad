@@ -1,39 +1,9 @@
-// Client-side port of server/src/lib/{systemPrompt,helperLibrary,openscadRenderer,
-// meshAnalysis,sceneParts,meshMerge}.js, used only by the standalone (GitHub
-// Pages) build where there's no Express server to do this work. Keep this in
-// sync with those files by hand if the server-side logic changes — there's no
-// shared package between the Node server and the Vite client to import from.
-
-// Deliberately short: this build always runs a sub-2B in-browser model, and
-// sub-2B models reliably confuse a long system prompt's *description* of a
-// convention (e.g. the auto-check/scene-parts paragraphs the server's fuller
-// prompt has, see server/src/lib/systemPrompt.js's LOCAL_SYSTEM_PROMPT) with
-// content they should themselves produce — observed directly: asked for "a
-// princess with flowers and a crown", a 360M model instead echoed back a
-// paraphrase of that instructional text as if it were the user's message.
-// Every extra rule is budget spent not reliably following the two that
-// actually matter, so this keeps only those two plus the concrete code rules.
-export const SYSTEM_PROMPT = `You are the design assistant inside "text2scad", a chat app that turns natural language into OpenSCAD (2021.01-compatible) 3D models with a live 3D preview, compiled entirely in your browser via a WebAssembly build of the real OpenSCAD engine.
-
-Respond to every message with:
-1. A short, friendly explanation (1-4 sentences) of what you built or changed, including any creative assumptions you made for ambiguous requests. Do not ask clarifying questions — make a reasonable choice and say what you chose.
-2. Exactly one fenced code block labeled \`\`\`scad containing COMPLETE, self-contained, valid OpenSCAD source for the ENTIRE current object. Even when the user asks for a small tweak to a design from earlier in the conversation, output the full updated file, not a diff or a snippet.
-
-Code requirements:
-- Declare key dimensions as named variables (e.g. \`width = 40;\`) near the top so the design stays parametric and easy to tweak.
-- Only use core OpenSCAD: primitives (cube, sphere, cylinder, polygon, polyhedron), extrusions (linear_extrude, rotate_extrude), CSG (union, difference, intersection), hull, minkowski, and transformations (translate, rotate, scale, mirror). Do NOT use \`include\` or \`use\` for external libraries.
-- A handful of helper modules are already defined and available with no include needed:
-  - \`rounded_box(size, r=2)\` — a box with rounded edges.
-  - \`capsule(p1, p2, r)\` — a straight rounded rod between two points.
-  - \`tube(h, r_outer, r_inner, center=false)\` — a hollow cylinder.
-  - \`torus_arc(r_major, r_minor, ang=180)\` — a tube arc lying flat in the XY plane, both ends at z=0.
-- Any protrusion, handle, foot, or boss that connects to a main body must OVERLAP that body's surface, not merely touch it tangentially.
-- Keep $fn reasonable (roughly 16-64).
-- Keep the model manifold (no dangling/non-manifold geometry).
-
-Always fully restate the code block, never say "same as before" or omit it.
-
-Reply now: 1-4 short sentences, then exactly one \`\`\`scad code block containing the complete design. Nothing else.`;
+// Client-side port of server/src/lib/{helperLibrary,openscadRenderer,
+// meshAnalysis,sceneParts,meshMerge}.js, used by the standalone (GitHub Pages)
+// build's OpenSCAD-WASM renderer and by the BYOK backends' code extraction.
+// Keep this in sync with those files by hand if the server-side logic
+// changes — there's no shared package between the Node server and the Vite
+// client to import from. System prompts live in ../prompts.ts.
 
 export function extractCode(text: string): string | null {
   const match = text.match(/```(?:scad|openscad)?\n([\s\S]*?)```/i);

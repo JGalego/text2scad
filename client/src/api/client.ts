@@ -1,6 +1,7 @@
-import type { Backend, ChatOptions, RenderQuality } from "./types";
+import type { Backend, ChatOptions, ProviderInfo, ProvidersConfig, RenderQuality } from "./types";
 import type { ChatMessage } from "../types";
 import type { StreamHandlers } from "./types";
+import { ANTHROPIC_BYOK_DEFAULT_MODEL, ANTHROPIC_BYOK_MODELS, OPENAI_BYOK_DEFAULT_MODEL, OPENAI_BYOK_MODELS } from "../byok/models";
 
 export type {
   Backend,
@@ -31,12 +32,48 @@ function getBackend(): Promise<Backend> {
   return backendPromise;
 }
 
+// BYOK ("bring your own key") providers are always offered, in both builds —
+// unlike the remote/local backend above, these never involve our server at
+// all: the browser talks straight to Anthropic's/OpenAI's own API using a key
+// the user enters and that lives only in this browser's localStorage (see
+// ../byok/keyStore.ts). Dynamically imported so picking neither never pulls
+// either SDK into the bundle.
+type ByokBackend = Pick<Backend, "streamChat" | "critiqueScad">;
+const BYOK_LOADERS: Record<string, () => Promise<ByokBackend>> = {
+  "anthropic-byok": () => import("../byok/anthropicBackend"),
+  "openai-byok": () => import("../byok/openaiBackend"),
+};
+
+const BYOK_PROVIDER_INFO: ProviderInfo[] = [
+  {
+    name: "anthropic-byok",
+    available: true,
+    supportsVision: false, // not wired up for BYOK yet — see anthropicBackend.ts's critiqueScad
+    models: ANTHROPIC_BYOK_MODELS,
+    defaultModel: ANTHROPIC_BYOK_DEFAULT_MODEL,
+    requiresApiKey: true,
+  },
+  {
+    name: "openai-byok",
+    available: true,
+    supportsVision: false,
+    models: OPENAI_BYOK_MODELS,
+    defaultModel: OPENAI_BYOK_DEFAULT_MODEL,
+    requiresApiKey: true,
+  },
+];
+
 export async function streamChat(
   messages: Pick<ChatMessage, "role" | "content">[],
   handlers: StreamHandlers,
   signal?: AbortSignal,
   options?: ChatOptions
 ): Promise<void> {
+  const byokLoad = options?.provider && BYOK_LOADERS[options.provider];
+  if (byokLoad) {
+    const byok = await byokLoad();
+    return byok.streamChat(messages, handlers, signal, options);
+  }
   const backend = await getBackend();
   return backend.streamChat(messages, handlers, signal, options);
 }
@@ -47,11 +84,20 @@ export async function renderScad(code: string, quality: RenderQuality = "draft")
 }
 
 export async function critiqueScad(code: string, prompt: string, options?: ChatOptions) {
+  const byokLoad = options?.provider && BYOK_LOADERS[options.provider];
+  if (byokLoad) {
+    const byok = await byokLoad();
+    return byok.critiqueScad(code, prompt, options);
+  }
   const backend = await getBackend();
   return backend.critiqueScad(code, prompt, options);
 }
 
-export async function getProvidersConfig() {
+export async function getProvidersConfig(): Promise<ProvidersConfig> {
   const backend = await getBackend();
-  return backend.getProvidersConfig();
+  const base = await backend.getProvidersConfig();
+  return {
+    activeProvider: base.activeProvider,
+    providers: [...base.providers, ...BYOK_PROVIDER_INFO],
+  };
 }

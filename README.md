@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/demo-GitHub%20Pages-222222?logo=github&logoColor=white" alt="Standalone demo on GitHub Pages" />
 </p>
 
-Chat with an LLM to describe a 3D object in plain English, get back real OpenSCAD source, and watch it render live in an interactive 3D viewer. Ask for changes — "make the handle thicker", "add a hole through the base" — and the model updates in place. Bring your own provider: Claude, OpenAI, or a small Hugging Face model running right on the server (no API key). There's also a [GitHub Pages demo](#github-pages-demo) that runs entirely client-side — an SLM and the OpenSCAD engine itself, both compiled to WebAssembly, running in your browser with no backend at all.
+Chat with an LLM to describe a 3D object in plain English, get back real OpenSCAD source, and watch it render live in an interactive 3D viewer. Ask for changes — "make the handle thicker", "add a hole through the base" — and the model updates in place. Bring your own provider: Claude, OpenAI, or a small Hugging Face model running right on the server (no API key) — or [bring your own API key](#bring-your-own-api-key) and talk to Anthropic/OpenAI straight from your browser, with our server never in the request path at all. There's also a [GitHub Pages demo](#github-pages-demo) that runs entirely client-side — an SLM and the OpenSCAD engine itself, both compiled to WebAssembly, running in your browser with no backend at all.
 
 ## Demo
 
@@ -98,6 +98,14 @@ Multi-object scenes (a house plus trees plus animals) are the other bottleneck: 
 
 `client/.env` only matters if you change the server's `PORT` — set `VITE_BACKEND_PORT` to match, since the dev server proxies `/api/*` to it (and uses `strictPort`, so it fails loudly instead of silently moving off `5173`).
 
+## Bring your own API key
+
+The provider picker also offers **"Anthropic (your key)"** and **"OpenAI (your key)"** — available in both the Express-backed app and the GitHub Pages standalone build. These work completely differently from the server-configured `anthropic`/`openai` providers above: your key is stored only in this browser's `localStorage` (`client/src/byok/keyStore.ts`), and every request goes **straight from your browser to Anthropic's/OpenAI's own API** (`client/src/byok/anthropicBackend.ts` / `openaiBackend.ts`, using their SDKs' `dangerouslyAllowBrowser` mode) — our server is never in that request path at all, so there's nothing to intercept even if you don't trust it.
+
+This is genuinely how it works, not just policy: both providers' APIs support direct cross-origin browser calls (verified — Anthropic sends `access-control-allow-origin: *`, OpenAI reflects the request's `Origin`), so `fetch`/the SDK really does talk to `api.anthropic.com`/`api.openai.com` directly, with no proxy in between. The usual caveat for any client-side-stored secret still applies: it's readable by other JS running on the same page (a compromised dependency, a browser extension with page access), so don't paste in a key you wouldn't want exposed to whatever else is running in your browser — same as any other API playground you'd paste a key into.
+
+Visual critique isn't wired up for BYOK yet (it needs a rendered PNG snapshot; the standalone build's OpenSCAD-WASM only exports STL, and doing it via the Express server would mean the snapshot round-trips through our backend even though the vision call itself wouldn't) — that button shows an explanatory error under these providers for now.
+
 ## GitHub Pages demo
 
 GitHub Pages only serves static files — there's no Express server and no `openscad` CLI to shell out to. Rather than skip the "watch it render live" centerpiece of the app, the standalone build moves *everything* into the browser:
@@ -142,10 +150,14 @@ server/                    Express API
 client/                    React + Vite + TypeScript frontend
   src/App.tsx                  layout, chat/render orchestration, auto-fix loop
   src/conversations.ts         localStorage-backed conversation history
-  src/api/client.ts             picks the remote or local backend (see below)
+  src/prompts.ts                system prompts shared by every client-side chat path
+  src/api/client.ts             routes to remote/local/BYOK (see below)
   src/api/remote.ts            Express-backed backend (SSE chat, render/critique fetch)
   src/local/                   standalone (GitHub Pages) backend — transformers.js
                                 chat, OpenSCAD-WASM render, ported scadTools.ts
+  src/byok/                    direct-to-provider chat with a user-supplied key —
+                                keyStore.ts (localStorage only), anthropicBackend.ts,
+                                openaiBackend.ts — never touches our server
   src/components/               chat bubbles, input, sidebar, provider picker, 3D viewer
 
 scripts/fetch-openscad-wasm.mjs   vendors the OpenSCAD-WASM build for the standalone client
@@ -159,3 +171,4 @@ scripts/fetch-openscad-wasm.mjs   vendors the OpenSCAD-WASM build for the standa
 - Each render runs in its own temp directory with a hard timeout, but `openscad` still executes arbitrary submitted source — don't expose this server to untrusted users without adding sandboxing (containers, seccomp, resource limits) in front of it.
 - The `local` LLM provider (server-side or the GitHub Pages standalone build) has no vision support, so visual critique is unavailable under it.
 - Model choice for both `local` (server) and the standalone build is restricted to a curated allow-list — not because arbitrary Hugging Face models wouldn't work, but to avoid a client request triggering an unbounded download on a shared server, and to keep the standalone site's picker to models actually tested at this app's system prompt.
+- BYOK keys are readable by any other JS on the same page (a compromised dependency, a browser extension) — same caveat as any client-side-stored secret. They're never sent to, or visible to, our own server, but "your browser" isn't a perfectly sealed box either.

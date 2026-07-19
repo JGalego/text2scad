@@ -53,13 +53,20 @@ export interface CritiqueFailure {
 }
 
 /** One provider/model choice as reported by the backend (remote: from
- *  GET /api/providers; local/standalone: a static list of in-browser models). */
+ *  GET /api/providers; local/standalone: a static list of in-browser models)
+ *  or a BYOK entry (client/src/byok/ — always listed, in both builds). */
 export interface ProviderInfo {
   name: string;
   available: boolean;
   supportsVision: boolean;
   models: string[];
   defaultModel: string;
+  /** True for "bring your own key" providers (client/src/byok/): the picker
+   *  shows a key-entry field for these instead of treating `available` as
+   *  final — the key lives only in this browser's localStorage and every
+   *  request goes straight from here to the provider's own API, never
+   *  through our server. */
+  requiresApiKey?: boolean;
 }
 
 export interface ProvidersConfig {

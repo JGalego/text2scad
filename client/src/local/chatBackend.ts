@@ -2,7 +2,8 @@ import type { TextGenerationPipeline } from "@huggingface/transformers";
 import { pipeline, TextStreamer } from "@huggingface/transformers";
 import type { ChatMessage } from "../types";
 import type { ChatOptions, CritiqueFailure, ProvidersConfig, StreamHandlers } from "../api/types";
-import { extractCode, SYSTEM_PROMPT } from "./scadTools";
+import { LOCAL_SYSTEM_PROMPT } from "../prompts";
+import { extractCode } from "./scadTools";
 
 export const LOCAL_MODELS = [
   "onnx-community/Qwen2.5-Coder-0.5B-Instruct",
@@ -44,9 +45,8 @@ function loadGenerator(
 /**
  * Client-side, in-browser equivalent of server/src/lib/providers/local.js's
  * streamChat, using transformers.js instead of the Node-only @huggingface
- * pipeline (same underlying library, browser build). The system prompt and
- * code extraction are the same contract the server-side providers honor —
- * see ./scadTools.ts.
+ * pipeline (same underlying library, browser build). System prompt in
+ * ../prompts.ts, code extraction in ./scadTools.ts.
  */
 export async function streamChat(
   messages: Pick<ChatMessage, "role" | "content">[],
@@ -58,7 +58,7 @@ export async function streamChat(
     const model = options?.model || DEFAULT_MODEL;
     const generator = await loadGenerator(model, handlers.onProgress);
 
-    const chatMessages = [{ role: "system", content: SYSTEM_PROMPT }, ...messages];
+    const chatMessages = [{ role: "system", content: LOCAL_SYSTEM_PROMPT }, ...messages];
 
     let text = "";
     const streamer = new TextStreamer(generator.tokenizer, {
