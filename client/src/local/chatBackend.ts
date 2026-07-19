@@ -75,7 +75,15 @@ export async function streamChat(
 
     await generator(chatMessages as never, {
       max_new_tokens: MAX_NEW_TOKENS,
-      do_sample: false,
+      // Pure greedy decoding (do_sample: false) is the main reason small
+      // models fall into repeating the same line/paragraph forever — see
+      // server/src/lib/providers/local.js's identical settings for the
+      // directly-observed failure this fixes.
+      do_sample: true,
+      temperature: 0.6,
+      top_p: 0.9,
+      repetition_penalty: 1.3,
+      no_repeat_ngram_size: 4,
       streamer,
     });
 

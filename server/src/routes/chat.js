@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { getProvider, resolveModel } from "../lib/providers/index.js";
-import { extractCode, SYSTEM_PROMPT } from "../lib/systemPrompt.js";
+import { extractCode, LOCAL_SYSTEM_PROMPT, SYSTEM_PROMPT } from "../lib/systemPrompt.js";
 
 export const chatRouter = Router();
 
@@ -59,7 +59,7 @@ chatRouter.post("/chat", async (req, res) => {
 
   try {
     const result = await provider.streamChat({
-      system: SYSTEM_PROMPT,
+      system: provider.name === "local" ? LOCAL_SYSTEM_PROMPT : SYSTEM_PROMPT,
       messages: cleaned,
       onDelta: (delta) => sseSend(res, "delta", { text: delta }),
       signal: abortController.signal,

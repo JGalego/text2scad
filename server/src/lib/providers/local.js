@@ -57,7 +57,17 @@ export const localProvider = {
 
     await generator(chatMessages, {
       max_new_tokens: LOCAL_MAX_NEW_TOKENS,
-      do_sample: false,
+      // Pure greedy decoding (do_sample: false) is the main reason small
+      // models fall into repeating the same line/paragraph forever — sampling
+      // plus explicit anti-repetition controls, not just a higher max token
+      // cap, is what actually breaks the loop. Observed directly: without
+      // these, a 360M/0.5B model would loop on a couple of lines indefinitely
+      // instead of hitting an EOS token.
+      do_sample: true,
+      temperature: 0.6,
+      top_p: 0.9,
+      repetition_penalty: 1.3,
+      no_repeat_ngram_size: 4,
       streamer,
     });
 

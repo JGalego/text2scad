@@ -110,9 +110,9 @@ GitHub Pages only serves static files — there's no Express server and no `open
 
 Trade-offs of running this way, in order of how much they bite:
 - **First visit downloads the model** (hundreds of MB to ~1.3GB depending on the one picked) before the first reply — cached by the browser afterward. There's a progress banner while this happens.
-- **Generation quality is well below Claude Sonnet's** — these are sub-2B-parameter models on a laptop's GPU/CPU, not a frontier model on a data-center GPU. Expect more retries and rougher geometry.
+- **Generation quality is well below Claude Sonnet's** — these are sub-2B-parameter models on a laptop's GPU/CPU, not a frontier model on a data-center GPU. Expect more retries, rougher geometry, and occasionally a reply that isn't even valid OpenSCAD (e.g. Python-flavored pseudocode) — OpenSCAD's syntax is a rare training signal at this size, especially for models tuned mainly on mainstream languages. Sampling with repetition controls (`repetition_penalty`, `no_repeat_ngram_size` — see `local.js`/`chatBackend.ts`) and a much shorter, single-purpose system prompt (`LOCAL_SYSTEM_PROMPT` / `local/scadTools.ts`) keep small models from degenerating into repeating the same line forever, which greedy decoding on a long, multi-rule prompt reliably triggers — but neither fixes the underlying capacity ceiling.
 - **No visual critique** — `POST /api/critique`'s vision step has no equivalent here, so that button is disabled with an explanatory tooltip.
-- **Scene-part rendering is sequential**, not parallel like the server (`SCENE_PART_CONCURRENCY`) — reusing/parallelizing WASM module instances across a single Web Worker wasn't verified as safe, so multi-object scenes are slower here.
+- **Scene-part rendering is sequential**, not parallel like the server (`SCENE_PART_CONCURRENCY`) — reusing/parallelizing WASM module instances across a single Web Worker wasn't verified as safe, so multi-object scenes are slower here. The convention isn't even in the local system prompt to begin with — an SLM is unlikely to use it correctly, and every extra rule is budget spent not following the two that actually matter.
 
 Build/run it yourself:
 
