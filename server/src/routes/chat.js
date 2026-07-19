@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { CHAT_MODEL, getAnthropicClient } from "../lib/anthropic.js";
+import { getProvider, resolveModel } from "../lib/providers/index.js";
 import { extractCode, SYSTEM_PROMPT } from "../lib/systemPrompt.js";
 
 export const chatRouter = Router();
@@ -12,7 +12,7 @@ function sseSend(res, event, data) {
 const MAX_MESSAGES = 40;
 
 chatRouter.post("/chat", async (req, res) => {
-  const { messages } = req.body || {};
+  const { messages, provider: providerOverride, model: modelOverride } = req.body || {};
 
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "messages must be a non-empty array." });
@@ -37,56 +37,46 @@ chatRouter.post("/chat", async (req, res) => {
     "X-Accel-Buffering": "no",
   });
 
-  let full = "";
-  let client;
+  let provider, model;
   try {
-    client = getAnthropicClient();
+    provider = getProvider(providerOverride);
+    model = resolveModel(providerOverride, modelOverride);
   } catch (err) {
     sseSend(res, "error", { message: err.message });
     return res.end();
   }
 
-  const stream = client.messages.stream({
-    model: CHAT_MODEL,
-    // Generous headroom: adaptive thinking runs by default on this model
-    // (see below) and shares this budget with the actual text response.
-    max_tokens: 8192,
-    // Explicit even though "adaptive" is the default — omitting `thinking`
-    // still runs adaptive, but leaving it implicit reads as "no thinking".
-    thinking: { type: "adaptive" },
-    output_config: { effort: "medium" },
-    system: SYSTEM_PROMPT,
-    messages: cleaned,
-  });
-
-  stream.on("text", (delta) => {
-    full += delta;
-    sseSend(res, "delta", { text: delta });
-  });
+  const abortController = new AbortController();
 
   // req's readable stream 'close' fires as soon as its body is fully read, not
   // when the client disconnects — so we watch res instead, and only treat it
   // as a real client disconnect if we hadn't finished writing the response yet.
   res.on("close", () => {
     if (!res.writableEnded) {
-      stream.controller?.abort?.();
+      abortController.abort();
     }
   });
 
   try {
-    const finalMessage = await stream.finalMessage();
-    if (!full.trim()) {
-      // Adaptive thinking consumed the whole budget before writing any reply.
+    const result = await provider.streamChat({
+      system: SYSTEM_PROMPT,
+      messages: cleaned,
+      onDelta: (delta) => sseSend(res, "delta", { text: delta }),
+      signal: abortController.signal,
+      model,
+    });
+    if (!result.text.trim()) {
+      // Adaptive thinking (Anthropic) can consume the whole budget before writing any reply.
       sseSend(res, "error", {
         message:
-          finalMessage.stop_reason === "max_tokens"
+          result.stopReason === "max_tokens"
             ? "The model spent its whole response budget thinking and never wrote a reply. Try again."
             : "The model returned an empty response.",
       });
       return;
     }
-    const code = extractCode(full);
-    sseSend(res, "done", { reply: full, code });
+    const code = extractCode(result.text);
+    sseSend(res, "done", { reply: result.text, code });
   } catch (err) {
     if (!res.writableEnded) {
       sseSend(res, "error", { message: err.message || "The model stream failed." });

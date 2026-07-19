@@ -6,9 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "fetch:openscad-wasm": "node ../scripts/fetch-openscad-wasm.mjs",
+    "dev:standalone": "npm run fetch:openscad-wasm && vite --mode standalone",
+    "build:standalone": "npm run fetch:openscad-wasm && tsc -b && vite build --mode standalone"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@react-three/drei": "^9.117.3",
     "@react-three/fiber": "^8.17.10",
     "react": "^18.3.1",

@@ -1,0 +1,58 @@
+name: Deploy standalone site to GitHub Pages
+
+# Builds the fully client-side variant of the app (in-browser SLM via
+# transformers.js + OpenSCAD compiled to WASM — see client/src/local/) and
+# publishes it to GitHub Pages. This is a different build target from the
+# Express-backed app (npm run build) — see the README's "GitHub Pages demo"
+# section. Requires the repo's Settings > Pages > Source to be set to
+# "GitHub Actions" (one-time, manual repo setting) before this can deploy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "client/**"
+      - "scripts/fetch-openscad-wasm.mjs"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build standalone client
+        run: npm run build:standalone -w client
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: client/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

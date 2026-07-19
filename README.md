@@ -10,10 +10,11 @@
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20TypeScript-3178c6?logo=typescript&logoColor=white" alt="React + TypeScript" />
   <img src="https://img.shields.io/badge/backend-Express-000000?logo=express&logoColor=white" alt="Express" />
   <img src="https://img.shields.io/badge/renderer-OpenSCAD-f9d72c?logo=openscad&logoColor=black" alt="OpenSCAD" />
-  <img src="https://img.shields.io/badge/AI-Claude-d97757?logo=anthropic&logoColor=white" alt="Powered by Claude" />
+  <img src="https://img.shields.io/badge/AI-Claude%20%7C%20OpenAI%20%7C%20Hugging%20Face-d97757?logo=anthropic&logoColor=white" alt="Claude, OpenAI, or a local Hugging Face model" />
+  <img src="https://img.shields.io/badge/demo-GitHub%20Pages-222222?logo=github&logoColor=white" alt="Standalone demo on GitHub Pages" />
 </p>
 
-Chat with Claude to describe a 3D object in plain English, get back real OpenSCAD source, and watch it render live in an interactive 3D viewer. Ask for changes — "make the handle thicker", "add a hole through the base" — and the model updates in place.
+Chat with an LLM to describe a 3D object in plain English, get back real OpenSCAD source, and watch it render live in an interactive 3D viewer. Ask for changes — "make the handle thicker", "add a hole through the base" — and the model updates in place. Bring your own provider: Claude, OpenAI, or a small Hugging Face model running right on the server (no API key). There's also a [GitHub Pages demo](#github-pages-demo) that runs entirely client-side — an SLM and the OpenSCAD engine itself, both compiled to WebAssembly, running in your browser with no backend at all.
 
 ## Demo
 
@@ -26,21 +27,26 @@ Chat with Claude to describe a 3D object in plain English, get back real OpenSCA
 ```bash
 npm install                       # installs server + client workspaces
 cp server/.env.example server/.env
-# edit server/.env and set ANTHROPIC_API_KEY
+# edit server/.env and set ANTHROPIC_API_KEY (or switch LLM_PROVIDER — see Configuration)
 npm run dev
 ```
 
-Opens the Express API on `http://localhost:3001` and the Vite client on `http://localhost:5173` (proxies `/api/*` to the backend). Requires the [`openscad`](https://openscad.org/downloads.html) CLI on `PATH` and an Anthropic API key.
+Opens the Express API on `http://localhost:3001` and the Vite client on `http://localhost:5173` (proxies `/api/*` to the backend). Requires the [`openscad`](https://openscad.org/downloads.html) CLI on `PATH`. By default it uses Claude (`ANTHROPIC_API_KEY`), but a dropdown in the chat toolbar lets you switch provider/model per request — including `local`, which runs a small Hugging Face model right in the Node process with no API key at all.
+
+Chat history is saved to the browser's `localStorage` (a sidebar lists past conversations — new/switch/rename/delete), so refreshing the page doesn't lose your work. The server itself stays stateless; the full history is just resent with each request.
 
 ## How it works
 
 ```mermaid
 sequenceDiagram
     participant Client as React client<br/>(chat + 3D viewer)
-    participant Server as Express server<br/>(Anthropic SDK + render)
+    participant Server as Express server<br/>(provider abstraction + render)
+    participant LLM as anthropic | openai | local
     participant OpenSCAD as openscad CLI
 
-    Client->>Server: POST /api/chat (conversation)
+    Client->>Server: POST /api/chat (conversation, provider, model)
+    Server->>LLM: streamChat(...)
+    LLM-->>Server: token stream
     Server-->>Client: SSE token stream
     Client->>Server: POST /api/render (code)
     Server->>OpenSCAD: spawn with .scad source
@@ -48,9 +54,9 @@ sequenceDiagram
     Server-->>Client: STL blob
 ```
 
-- **Chat → code**: the client streams the conversation to `POST /api/chat`; Claude replies with a short explanation plus one ` ```scad ` block, streamed back over SSE token-by-token.
+- **Chat → code**: the client streams the conversation to `POST /api/chat`, along with the provider/model chosen in the toolbar; `server/src/lib/providers/index.js` picks the right backend (`anthropic.js`, `openai.js`, or `local.js`), which replies with a short explanation plus one ` ```scad ` block, streamed back over SSE token-by-token. `GET /api/providers` reports which providers/models are actually available (e.g. `openai` is hidden/disabled unless `OPENAI_API_KEY` is set) so the client can build the picker dynamically.
 - **Code → 3D**: each code block is posted to `POST /api/render`, which shells out to the real `openscad` binary for a binary STL, parsed client-side with three.js's `STLLoader` and shown via `@react-three/fiber`.
-- Because rendering uses the real OpenSCAD CLI (not a JS reimplementation), the full OpenSCAD language and its exact rendering behavior are supported.
+- Because rendering uses the real OpenSCAD CLI (not a JS reimplementation), the full OpenSCAD language and its exact rendering behavior are supported. The `local` provider is the odd one out: it isn't vision-capable, so `POST /api/critique` (below) returns a `501` when it's active.
 
 ### Optimizations
 
@@ -75,8 +81,14 @@ Multi-object scenes (a house plus trees plus animals) are the other bottleneck: 
 
 | Variable | Default | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | required |
-| `CHAT_MODEL` | `claude-sonnet-5` | model used to generate/refine OpenSCAD code |
+| `LLM_PROVIDER` | `anthropic` | `anthropic` \| `openai` \| `local` — which backend generates/refines code |
+| `ANTHROPIC_API_KEY` | — | required when `LLM_PROVIDER=anthropic` |
+| `CHAT_MODEL` | `claude-sonnet-5` | Anthropic model used to generate/refine OpenSCAD code |
+| `OPENAI_API_KEY` | — | required when `LLM_PROVIDER=openai` |
+| `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | OpenAI model used when `LLM_PROVIDER=openai` |
+| `LOCAL_MODEL` | `onnx-community/Qwen2.5-Coder-0.5B-Instruct` | Hugging Face model id run in-process via [transformers.js](https://huggingface.co/docs/transformers.js) when `LLM_PROVIDER=local` — no API key, downloaded once and cached |
+| `LOCAL_MODEL_DTYPE` | `q4` | ONNX quantization for the local model (CPU-friendly; browser/WebGPU builds use `q4f16` instead — see the standalone site below) |
+| `LOCAL_MAX_NEW_TOKENS` | `2048` | generation cap for the local provider |
 | `PORT` | `3001` | Express server port |
 | `OPENSCAD_BIN` | `openscad` | path to the OpenSCAD binary |
 | `RENDER_TIMEOUT_MS` | `20000` | kills a "draft" quality render past this long |
@@ -86,13 +98,40 @@ Multi-object scenes (a house plus trees plus animals) are the other bottleneck: 
 
 `client/.env` only matters if you change the server's `PORT` — set `VITE_BACKEND_PORT` to match, since the dev server proxies `/api/*` to it (and uses `strictPort`, so it fails loudly instead of silently moving off `5173`).
 
+## GitHub Pages demo
+
+GitHub Pages only serves static files — there's no Express server and no `openscad` CLI to shell out to. Rather than skip the "watch it render live" centerpiece of the app, the standalone build moves *everything* into the browser:
+
+| Piece | How it works |
+|---|---|
+| **Chat (SLM)** | A small Hugging Face model runs client-side via [transformers.js](https://huggingface.co/docs/transformers.js), WebGPU-accelerated where available (falls back to WASM automatically). `client/src/components/ProviderModelPicker.tsx` offers a choice of models (`Qwen2.5-Coder-0.5B/1.5B-Instruct`, `SmolLM2-360M-Instruct`) — code-tuned models generate noticeably better OpenSCAD than general-purpose ones at the same size. |
+| **Render (OpenSCAD)** | The real OpenSCAD engine, compiled to WebAssembly, runs in a dedicated Web Worker (`client/src/local/openscadWorker.js`) — not a JS reimplementation, so the same language/behavior as the server path. The WASM build itself has no npm package (see `scripts/fetch-openscad-wasm.mjs` for why); it's fetched from OpenSCAD's own build server at build time and vendored into `client/public/vendor/`, gitignored rather than committed. |
+| **Everything else** | The chat UI, conversation history/sidebar, 3D viewer, and the `$fn`-cap/scene-parts/mesh-analysis logic are all reused — `client/src/local/scadTools.ts` is a hand-ported copy of the equivalent server-side logic, since there's no shared package between the Node server and the static site. |
+
+Trade-offs of running this way, in order of how much they bite:
+- **First visit downloads the model** (hundreds of MB to ~1.3GB depending on the one picked) before the first reply — cached by the browser afterward. There's a progress banner while this happens.
+- **Generation quality is well below Claude Sonnet's** — these are sub-2B-parameter models on a laptop's GPU/CPU, not a frontier model on a data-center GPU. Expect more retries and rougher geometry.
+- **No visual critique** — `POST /api/critique`'s vision step has no equivalent here, so that button is disabled with an explanatory tooltip.
+- **Scene-part rendering is sequential**, not parallel like the server (`SCENE_PART_CONCURRENCY`) — reusing/parallelizing WASM module instances across a single Web Worker wasn't verified as safe, so multi-object scenes are slower here.
+
+Build/run it yourself:
+
+```bash
+npm run dev:standalone -w client     # local dev server, in-browser backend
+npm run build:standalone -w client   # production build → client/dist
+```
+
+Deployment is automatic via [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml) on every push to `main` that touches `client/**`. One manual, one-time step: set this repo's **Settings → Pages → Source** to **"GitHub Actions"**.
+
 ## Project layout
 
 ```
 server/                    Express API
-  src/routes/chat.js          SSE streaming chat endpoint (Anthropic)
+  src/routes/chat.js          SSE streaming chat endpoint (provider-agnostic)
   src/routes/render.js        STL render endpoint (openscad CLI)
   src/routes/critique.js      PNG snapshot + vision critique endpoint
+  src/routes/providers.js     GET /api/providers — available providers/models
+  src/lib/providers/          anthropic.js, openai.js, local.js + index.js factory
   src/lib/systemPrompt.js     system prompt + code-block extraction
   src/lib/openscadRenderer.js STL/PNG rendering via the openscad CLI
   src/lib/helperLibrary.js    curated OpenSCAD helper modules
@@ -101,13 +140,22 @@ server/                    Express API
   src/lib/meshMerge.js        STL concatenation + concurrency helper
 
 client/                    React + Vite + TypeScript frontend
-  src/App.tsx                 layout, chat/render orchestration, auto-fix loop
-  src/api/client.ts            SSE chat client, render + critique fetch helpers
-  src/components/              chat bubbles, input, three.js viewer
+  src/App.tsx                  layout, chat/render orchestration, auto-fix loop
+  src/conversations.ts         localStorage-backed conversation history
+  src/api/client.ts             picks the remote or local backend (see below)
+  src/api/remote.ts            Express-backed backend (SSE chat, render/critique fetch)
+  src/local/                   standalone (GitHub Pages) backend — transformers.js
+                                chat, OpenSCAD-WASM render, ported scadTools.ts
+  src/components/               chat bubbles, input, sidebar, provider picker, 3D viewer
+
+scripts/fetch-openscad-wasm.mjs   vendors the OpenSCAD-WASM build for the standalone client
+.github/workflows/deploy-pages.yml  builds + deploys the standalone client to GitHub Pages
 ```
 
 ## Notes / limitations
 
-- Stateless backend — the full chat history is sent with every request, so conversation state lives in the browser only (lost on refresh).
-- Generated code is restricted to core OpenSCAD; `include`/`use` of external libraries (MCAD, BOSL2, fonts) isn't available in the render sandbox.
+- Stateless server — the full chat history is sent with every request; conversation state itself now persists in the browser via `localStorage` (see the sidebar), not on the server.
+- Generated code is restricted to core OpenSCAD; `include`/`use` of external libraries (MCAD, BOSL2, fonts) isn't available in the render sandbox (server or standalone).
 - Each render runs in its own temp directory with a hard timeout, but `openscad` still executes arbitrary submitted source — don't expose this server to untrusted users without adding sandboxing (containers, seccomp, resource limits) in front of it.
+- The `local` LLM provider (server-side or the GitHub Pages standalone build) has no vision support, so visual critique is unavailable under it.
+- Model choice for both `local` (server) and the standalone build is restricted to a curated allow-list — not because arbitrary Hugging Face models wouldn't work, but to avoid a client request triggering an unbounded download on a shared server, and to keep the standalone site's picker to models actually tested at this app's system prompt.
